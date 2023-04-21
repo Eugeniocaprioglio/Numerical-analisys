@@ -1,11 +1,22 @@
 import math
+"""
+    This program calculates the volume of an horizontal cylindrical-elliptical tank given the hight of the liquid.
+    It also calculates the height of the liquid given the volume of liquid inside.
+"""
 
+# Tank meassurments
 
 W = 2.3
 H = 1.62
 L = 7
+
+# Total volume of the tank
+
 max_vol = math.pi*W*H*L/4
-d = .0001
+
+d = .0001 # step size
+
+# function used for calculate the area of the ellipse. Is valid for 0 < x < H
 
 def oval(x):
     return W*math.sqrt(1 - (2*x/H - 1)**2)
@@ -22,12 +33,7 @@ def trapezoid(f, a, b, max_area, dx):
         
     return (f(a) + 2*s + f(b))*dx/2
 
-def simpson(f, a, b, dx):
-    k = int((b - a)/(2*dx))
-    s = 0
-    for i in range(1,k):
-        s += f(a + (2*i - 2)*dx) + 4*f(a + (2*i - 1)*dx) + f(a + 2*i*dx)
-    return s*dx/3
+
 
 def volume(h):
     return trapezoid(oval, 0, h, 2*max_vol/L, d)*L
