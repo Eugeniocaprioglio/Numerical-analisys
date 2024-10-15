@@ -1,0 +1,258 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+font1 = {'family':'serif','color':'blue','size':15}
+font2 = {'family':'serif','color':'darkred','size':12}
+
+#------------Define the constants and calculate Fourier number---
+
+SEC_PER_DAY = 86400 #seconds
+DAYS_PER_YEAR = 365 #days
+distance_to_the_sea = 0
+
+#----dimensions of the discretization elements-----
+
+delta_x = 0.001 # meters
+delta_t = SEC_PER_DAY # seconds
+tic = 0 #set time counter
+
+
+#--- Chloride concentration data in kg/m^3---
+
+Ci = 1
+Ct = 0.68
+detectable_concentration = 0.15
+
+#----Parameters of the surface concentration function--- 
+
+Cs = 2.8
+A = 2.3
+B = 6.6e-3
+C = 0.4
+alpha = 0.6
+beta = 6
+
+def surface_concentration(x,t):
+    return (A*np.exp(-B*x) + C)/(2 + 1.8*np.sin(2*3.1416*t))
+
+#----diffusion data------
+water_cement_ratio = 0.4
+gamma = 0.15
+
+def porosity():
+    return 45.2*water_cement_ratio - 7.28
+def diffusion_coefficient():
+    return 1e-12*(0.6006*porosity() - 1.3973)
+
+D_in = 3e-12
+D_ex = gamma*D_in
+
+def calculate_fo(D):
+    fo_x = D*delta_t/delta_x**2
+    if (1 - 2*fo_x< 0):
+        return 'The system is unstable. Choose a smaller value of delta_t' 
+    return fo_x
+
+#-------------        Border conditions       -----------------------------------------
+
+def external_border_Conditions(u):
+    global tic
+    tic += 1
+    time = tic*delta_t/(SEC_PER_DAY*DAYS_PER_YEAR)
+    Cs_t = surface_concentration(100, 0)
+    u[0] = Cs # Dirichlet
+    u[-2] = u[-1] # Newman
+    return u
+
+def internal_border_conditions(p,q):
+    k = len(p)//4
+    q[0] = D_ex/D_in*(p[k - 1] - p[k]) + p[k]
+    q[-1] = q[-2]
+    return q
+
+#----------------      Auxiliary functions      ------------------------
+
+def search_x(m, cd):
+    for k in range(len(m)):
+        if m[k] < cd:
+            return 1000*k*delta_x
+    return 1000*len(m)*delta_x
+
+def softer(t):
+    arr = []
+    arr.append(t[0])
+    for i in range(len(t) - 1):
+        if t[i+1][1] - t[i][1] > 0.5:
+            arr.append(t[i+1])
+    return np.array(arr)
+
+def second_derivative(u):
+    v = np.zeros(len(u))
+    for i in range(1,len(u)-1):
+        v[i] = u[i+1] - 2*u[i] + u[i-1]
+    return np.array(v)
+
+#-----------    Concentration profile functions      ---------------------
+
+def diffusion(fo, u, iterations):
+    for i in range(iterations):
+        u = u + fo*second_derivative(u)
+        u = external_border_Conditions(u)
+    return u
+
+def protected_diffusion(fo_ex, fo_in, u, v, iterations):
+    k = len(u)//4
+    for i in range(iterations):
+        u = external_border_Conditions(u)
+        u = u + fo_ex*second_derivative(u)
+        u = external_border_Conditions(u)
+        v = internal_border_conditions(u,v)
+        v = v + fo_in*second_derivative(v)
+    return np.concatenate((u[0:k],v))
+
+def unprotected_concentration_vs_time(fo, u, x_coord, iterations):
+    arr = []
+    for i in range(iterations):
+        u = u + fo*second_derivative(u)
+        u = external_border_Conditions(u)
+        arr.append([i*delta_t/(SEC_PER_DAY*DAYS_PER_YEAR), u[x_coord]])
+    return np.array(arr)
+
+def protected_concentration_vs_time(fo_ex, fo_in, u, v, x_coord, iterations):
+    arr = []
+    k = len(u)//4
+    for i in range(iterations):
+        u = external_border_Conditions(u)
+        u = u + fo_ex*second_derivative(u)
+        u = external_border_Conditions(u)
+        v = internal_border_conditions(u,v)
+        v = v + fo_in*second_derivative(v)
+        arr.append([i*delta_t/(SEC_PER_DAY*DAYS_PER_YEAR), v[x_coord]])
+    return np.array(arr)
+
+def unprotected_chloride_penetration(fo, u, iterations):
+    arr = []
+    for i in range(iterations):
+        u = u + fo*second_derivative(u)
+        u = external_border_Conditions(u)
+        arr.append([i*delta_t/(SEC_PER_DAY*DAYS_PER_YEAR)*12, search_x(u, detectable_concentration)])
+    return np.array(arr)
+
+def protected_chloride_penetration(fo_ex, fo_in, u, v, iterations):
+    k = len(u)//4
+    arr = []
+    for i in range(iterations):
+        u = external_border_Conditions(u)
+        u = u + fo_ex*second_derivative(u)
+        u = external_border_Conditions(u)
+        v = internal_border_conditions(u,v)
+        v = v + fo_in*second_derivative(v)
+        w = np.concatenate((u[0:k],v))
+        arr.append([i*delta_t/(SEC_PER_DAY*DAYS_PER_YEAR)*12, search_x(w, detectable_concentration)])
+    return np.array(arr)
+
+
+#-------------------------------------------------------------------------
+#----------------     Plotting functions     -----------------------------
+#-------------------------------------------------------------------------
+
+def plot_profile(protected_depth, rebar_position, years):
+    arr = []
+    protected_arr = []
+    d = int(protected_depth/delta_x)
+    r = int(rebar_position/delta_x)
+    m = np.full(4*r,0.5)
+    m_e = np.full(4*d,0.5)
+    m_i = np.full(4*(r-d),0.5)
+    fourier = calculate_fo(D_in)
+    external_fourier = calculate_fo(D_ex)
+    N_iter = int(years*SEC_PER_DAY*DAYS_PER_YEAR/delta_t)
+    if isinstance(fourier, str):
+        print(fourier)
+        return
+    else:
+        solution = diffusion(fourier, m, N_iter)
+        protected_solution = protected_diffusion(external_fourier, fourier, m_e, m_i, N_iter)
+        for i in range(2*r):
+            arr.append(solution[i])
+            protected_arr.append(protected_solution[i])
+        
+    axis = plt.subplot()
+    axis.plot([i*delta_x for i in range(len(arr))],arr, label='Unprotected concentration profile \n Concentration at rebar = ' + str(round(arr[r], 3)) + 'kg/m3')
+    axis.plot([i*delta_x for i in range(len(protected_arr))],protected_arr, label='Concentration profile with protection \n Concentration at rebar = ' + str(round(protected_arr[r], 3)) + 'kg/m3')
+    plt.title('Chloride Concentration Profile after ' + str(years) + ' years', fontdict=font1)
+    plt.xlabel('Depth (m)', fontdict=font2)
+    plt.ylabel('Chloride concentration (kg/m3)', fontdict=font2)
+    plt.axhline(Ct, label='Chloride threshold')
+    plt.axvline(rebar_position, linestyle='dashed', label='Rebar position, x = ' + str(r) + 'mm')
+    plt.grid()
+    plt.legend()
+    plt.show()
+    plt.show()
+    print(solution[1])
+    print(protected_solution[1])
+
+def plot_chloride_penetration(protected_depth, rebar_position, years):
+    d = int(protected_depth/delta_x)
+    r = int(rebar_position/delta_x)
+    
+    m = np.full(4*r,0)
+    m_e = np.full(4*d,0)
+    m_i = np.full(4*(r-d),0)
+    fourier = calculate_fo(D_in)
+    external_fourier = calculate_fo(D_ex)
+    N_iter = int(years*SEC_PER_DAY*DAYS_PER_YEAR/delta_t)
+    if isinstance(fourier, str):
+        print(fourier)
+        return
+    else:
+        solution = unprotected_chloride_penetration(fourier, m, N_iter)
+        protected_solution = protected_chloride_penetration(external_fourier, fourier, m_e, m_i, N_iter)
+        solution = softer(solution)
+        protected_solution = softer(protected_solution)
+    axis = plt.subplot()
+    axis.plot(solution[:,0],solution[:,1], label='Unprotected penetration depth')
+    axis.plot(protected_solution[:,0], protected_solution[:,1], label='Protected penetration depth')
+    plt.title('Chloride penetration depth vs time', fontdict=font1)
+    plt.xlabel('Time (months)', fontdict=font2)
+    plt.ylabel('Penetration depth (mm)', fontdict=font2)
+    plt.grid()
+    plt.show()
+
+def plot_concentration_vs_time(protected_depth, rebar_position, years):
+    d = int(protected_depth/delta_x)
+    r = int(rebar_position/delta_x)
+    t_crit = "Not Achieved"
+    t_crit_protected = "Not Achieved"
+    m = np.full(4*r,0)
+    m_e = np.full(4*d,0)
+    m_i = np.full(4*(r-d),0)
+    fourier = calculate_fo(D_in)
+    external_fourier = calculate_fo(D_ex)
+    N_iter = int(years*SEC_PER_DAY*DAYS_PER_YEAR/delta_t)
+    if isinstance(fourier, str):
+        print(fourier)
+        return
+    else:
+        solution = unprotected_concentration_vs_time(fourier, m, r, N_iter)
+        protected_solution = protected_concentration_vs_time(external_fourier, fourier, m_e, m_i, r - d, N_iter)
+        for a in solution:
+            if Ct < a[1]:
+                t_crit = str(round(a[0], 1))
+                break
+        for a in protected_solution:
+            if Ct < a[1]:
+                t_crit_protected = str(round(a[0], 1))
+                break
+    axis = plt.subplot()
+    axis.plot(solution[:,0],solution[:,1], label='Unprotected concentration at rebar. \n Critical time = ' + t_crit + ' years')
+    axis.plot(protected_solution[:,0], protected_solution[:,1], label='Protected concentration at rebar \n Critical time = ' + t_crit_protected + ' years')
+    plt.title('Chloride concentration at rebar position', fontdict=font1)
+    plt.xlabel('Time (years)', fontdict=font2)
+    plt.ylabel('Chloride concentration (kg/m3)', fontdict=font2)
+    plt.axhline(Ct, label='Chloride threshold concentration')
+    plt.grid()
+    plt.legend()
+    plt.show()
+
